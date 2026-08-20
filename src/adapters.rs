@@ -346,19 +346,26 @@ fn chat_tools(body: &Value) -> (Vec<Value>, ToolMap) {
 
 fn collect_chat_tools(tools: &[Value], prefix: &str, output: &mut Vec<Value>, map: &mut ToolMap) {
     for tool in tools {
+        let tool_type = tool.get("type").and_then(Value::as_str).unwrap_or_default();
+        if !matches!(tool_type, "namespace" | "function" | "custom") {
+            continue;
+        }
         let name = tool.get("name").and_then(Value::as_str).unwrap_or_default();
+        if name.is_empty() {
+            continue;
+        }
         let original_name = if prefix.is_empty() {
             name.to_owned()
         } else {
             format!("{prefix}.{name}")
         };
-        if tool.get("type").and_then(Value::as_str) == Some("namespace") {
+        if tool_type == "namespace" {
             if let Some(children) = tool.get("tools").and_then(Value::as_array) {
                 collect_chat_tools(children, &original_name, output, map);
             }
             continue;
         }
-        let kind = if tool.get("type").and_then(Value::as_str) == Some("custom") {
+        let kind = if tool_type == "custom" {
             ToolKind::Custom
         } else {
             ToolKind::Function
@@ -1068,9 +1075,12 @@ mod tests {
     #[test]
     fn converts_codex_custom_tool_round_trip_to_anthropic() {
         let source = json!({
-            "tools":[{"type":"namespace","name":"functions","tools":[
-                {"type":"custom","name":"exec","description":"run code"}
-            ]}],
+            "tools":[
+                {"type":"namespace","name":"functions","tools":[
+                    {"type":"custom","name":"exec","description":"run code"}
+                ]},
+                {"type":"web_search","external_web_access":true}
+            ],
             "input":[
                 {"type":"message","role":"assistant","content":"I will inspect it."},
                 {"type":"custom_tool_call","call_id":"c1","namespace":"functions","name":"exec","input":"text(1)"},
@@ -1079,6 +1089,7 @@ mod tests {
         });
         let out = responses_to_anthropic(&source, "claude-opus-5").unwrap();
         assert_eq!(out["tools"][0]["name"], "functions__exec");
+        assert_eq!(out["tools"].as_array().unwrap().len(), 1);
         assert_eq!(out["messages"][0]["role"], "assistant");
         assert_eq!(out["messages"][0]["content"][1]["type"], "tool_use");
         assert_eq!(out["messages"][0]["content"][1]["name"], "functions__exec");
