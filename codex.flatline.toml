@@ -1,0 +1,10 @@
+# Merge this provider into ~/.codex/config.toml, then select it with:
+# model_provider = "flatline"
+# model = "gpt-5.6-sol"
+
+[model_providers.flatline]
+name = "Flatline Proxy"
+base_url = "http://127.0.0.1:8080/v1"
+wire_api = "responses"
+requires_openai_auth = true
+supports_websockets = false

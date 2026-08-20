@@ -1,0 +1,14 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>Flatline Proxy</title><style>
+:root{color-scheme:dark;font:15px ui-monospace,SFMono-Regular,Menlo,monospace;background:#090b10;color:#d8dee9}body{max-width:1100px;margin:48px auto;padding:0 24px}h1{font-size:26px;color:#8fbcbb}p{color:#8792a2}textarea{box-sizing:border-box;width:100%;min-height:460px;background:#11151d;color:#d8dee9;border:1px solid #2b3443;border-radius:8px;padding:16px;line-height:1.45}button{background:#5e81ac;color:white;border:0;border-radius:6px;padding:10px 16px;margin:12px 0;cursor:pointer}button:hover{background:#81a1c1}#status{margin-left:12px}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:9px;border-bottom:1px solid #202735}th{color:#88c0d0}.ok{color:#a3be8c}.bad{color:#bf616a}</style></head><body>
+<h1>Flatline Proxy</h1><p>Provider secrets stay in environment variables. This editor stores only their variable names.</p>
+<textarea id="config" spellcheck="false"></textarea><br><button id="save">Save configuration</button><span id="status"></span>
+<h2>Recent routing</h2><table><thead><tr><th>Time</th><th>Model</th><th>Provider</th><th>Upstream</th><th>Cache hint</th><th>Status</th></tr></thead><tbody id="usage"></tbody></table>
+<script>
+const config=document.querySelector('#config'),status=document.querySelector('#status'),usage=document.querySelector('#usage');
+async function load(){config.value=JSON.stringify(await (await fetch('/api/config')).json(),null,2);await refresh()}
+async function refresh(){const rows=await (await fetch('/api/usage')).json();usage.innerHTML=rows.map(x=>`<tr><td>${new Date(x.at).toLocaleTimeString()}</td><td>${x.requested_model}</td><td>${x.provider}</td><td>${x.upstream_model}</td><td>${x.cache_resident?'resident':'cold'}</td><td>${x.status??''}</td></tr>`).join('')}
+document.querySelector('#save').onclick=async()=>{try{const r=await fetch('/api/config',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify(JSON.parse(config.value))});const x=await r.json();status.className=r.ok?'ok':'bad';status.textContent=r.ok?'saved':x.error}catch(e){status.className='bad';status.textContent=e.message}}
+load();setInterval(refresh,3000);
+</script></body></html>
+

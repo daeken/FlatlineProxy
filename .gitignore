@@ -1,0 +1,5 @@
+/target
+/flatline.json
+*.log
+*.tmp
+.DS_Store
