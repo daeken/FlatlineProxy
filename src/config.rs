@@ -15,6 +15,18 @@ pub struct Config {
     pub models: HashMap<String, ModelPolicy>,
     #[serde(default)]
     pub catalog_models: Vec<CatalogModel>,
+    #[serde(default)]
+    pub prompt_guard: PromptGuard,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct PromptGuard {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub expected_path: String,
+    #[serde(default)]
+    pub template_path: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

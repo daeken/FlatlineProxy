@@ -1,4 +1,9 @@
 {
+  "prompt_guard": {
+    "enabled": false,
+    "expected_path": "codex-system-prompt.txt",
+    "template_path": "codex-system-prompt.template.txt"
+  },
   "providers": [
     { "id": "openai_subscription", "name": "OpenAI via ChatGPT subscription", "base_url": "https://chatgpt.com", "path": "/backend-api/codex/responses", "protocol": "responses", "auth": "incoming_open_ai", "enabled": true },
     { "id": "openai", "name": "OpenAI API", "base_url": "https://api.openai.com", "api_key_env": "OPENAI_API_KEY", "path": "/v1/responses", "protocol": "responses", "auth": "bearer", "enabled": true },

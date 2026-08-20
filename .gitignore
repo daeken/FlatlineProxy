@@ -3,3 +3,5 @@
 *.log
 *.tmp
 .DS_Store
+/codex-system-prompt.txt
+/codex-system-prompt.template.txt

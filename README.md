@@ -35,6 +35,10 @@ Cache residency is currently a local routing hint, not a guarantee from the upst
 - `GET /api/usage` — last 1,000 routing decisions
 - `GET /health` — liveness
 
+## Codex prompt guard
+
+Flatline can require a byte-for-byte match against Codex's core developer prompt and replace it from a template after selecting a route. Set `prompt_guard.enabled`, `expected_path`, and `template_path` in the configuration. Every request is rejected before forwarding if the captured prompt differs or is absent. Templates support `{{requested_model}}`, `{{provider}}`, and `{{upstream_model}}` placeholders and are reread on every request, so edits take effect without restarting Flatline.
+
 ## Backlog
 
-- Configurable system/developer-prompt rewrites. Support arbitrary ordered rules with matching by logical model, resolved provider, and upstream model, plus replace, prepend, and append operations. Rewrites should be visible in request diagnostics and must preserve the original prompt for debugging.
+- Extend prompt rewriting with ordered prepend/append rules and per-route matching.

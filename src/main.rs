@@ -1,5 +1,6 @@
 mod adapters;
 mod config;
+mod prompt;
 mod routing;
 
 #[cfg(unix)]
@@ -299,6 +300,8 @@ async fn forward_response(
     );
     info!(%trace_id, headers = %redacted_headers(incoming_headers), payload = %adapters::redacted_json(body), "full inbound request");
     let config = state.config.read().await;
+    let prompt_template =
+        prompt::PromptTemplate::load_and_validate(body, &config.prompt_guard).await?;
     let selections = candidates(&config, &requested_model, body, &state.cache).await?;
     let fingerprint = prompt_fingerprint(body);
     drop(config);
@@ -326,10 +329,25 @@ async fn forward_response(
             selection.provider.base_url.trim_end_matches('/'),
             selection.provider.path.as_str()
         );
-        let tool_map = adapters::tool_map(body);
+        let mut routed_body = body.clone();
+        if let Some(template) = &prompt_template {
+            template.apply(
+                &mut routed_body,
+                &requested_model,
+                &selection.provider.id,
+                &selection.route.upstream_model,
+            )?;
+            info!(
+                %trace_id,
+                provider_id = %selection.provider.id,
+                upstream_model = %selection.route.upstream_model,
+                "verified and replaced Codex developer prompt"
+            );
+        }
+        let tool_map = adapters::tool_map(&routed_body);
         let adapted = adapters::request(
             selection.provider.protocol,
-            body,
+            &routed_body,
             &selection.route.upstream_model,
         )?;
         info!(%trace_id, %provider_id, url = %url, payload = %adapters::redacted_json(&adapted), "full adapted upstream request");
@@ -628,6 +646,18 @@ async fn put_config(
 }
 
 fn validate_config(config: &Config) -> Result<(), String> {
+    if config.prompt_guard.enabled {
+        if config.prompt_guard.expected_path.trim().is_empty() {
+            return Err(
+                "prompt_guard.expected_path is required when prompt guarding is enabled".into(),
+            );
+        }
+        if config.prompt_guard.template_path.trim().is_empty() {
+            return Err(
+                "prompt_guard.template_path is required when prompt guarding is enabled".into(),
+            );
+        }
+    }
     let mut ids = std::collections::HashSet::new();
     for provider in &config.providers {
         if !ids.insert(&provider.id) {
