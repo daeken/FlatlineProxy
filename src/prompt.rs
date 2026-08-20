@@ -96,6 +96,9 @@ async fn read_prompt_file(path: &str) -> Result<String> {
 
 fn prompt_texts(body: &Value) -> Vec<String> {
     let mut result = Vec::new();
+    if let Some(instructions) = body.get("instructions").and_then(Value::as_str) {
+        result.push(instructions.to_owned());
+    }
     let Some(items) = body.get("input").and_then(Value::as_array) else {
         return result;
     };
@@ -120,6 +123,9 @@ fn prompt_texts(body: &Value) -> Vec<String> {
 }
 
 fn visit_prompt_texts_mut(body: &mut Value, visitor: &mut impl FnMut(&mut String)) {
+    if let Some(Value::String(instructions)) = body.get_mut("instructions") {
+        visitor(instructions);
+    }
     let Some(items) = body.get_mut("input").and_then(Value::as_array_mut) else {
         return;
     };
@@ -175,6 +181,25 @@ mod tests {
             body.pointer("/input/0/content/0/text")
                 .and_then(Value::as_str),
             Some("You are Codex, running claude-opus-5 through anthropic for alias")
+        );
+    }
+
+    #[test]
+    fn replaces_top_level_responses_instructions() {
+        let template = PromptTemplate {
+            expected: "You are Codex, old".into(),
+            template: "You are Codex, running {{upstream_model}}".into(),
+        };
+        let mut body = json!({
+            "instructions": "You are Codex, old",
+            "input": [{"role":"user","content":"hello"}]
+        });
+        template
+            .apply(&mut body, "alias", "zai", "glm-5.3")
+            .unwrap();
+        assert_eq!(
+            body.get("instructions").and_then(Value::as_str),
+            Some("You are Codex, running glm-5.3")
         );
     }
 }
