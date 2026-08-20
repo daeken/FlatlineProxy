@@ -416,6 +416,7 @@ fn deepseek_v4_reasoning_effort(effort: &str) -> &'static str {
 }
 
 fn responses_to_anthropic(body: &Value, model: &str) -> Result<Value> {
+    let (chat_tool_defs, tool_map) = chat_tools(body);
     let mut messages = Vec::new();
     let mut system = body
         .get("instructions")
@@ -448,15 +449,35 @@ fn responses_to_anthropic(body: &Value, model: &str) -> Result<Value> {
                     json!({"type":"text", "text":content_text(&item["content"])}),
                 );
             }
-            "function_call" => push_anthropic_message(
-                &mut messages,
-                "assistant",
-                json!({
-                    "type":"tool_use", "id":item.get("call_id").or_else(|| item.get("id")).cloned().unwrap_or_default(),
-                    "name":item["name"], "input":parse_arguments(&item["arguments"])
-                }),
-            ),
-            "function_call_output" => push_anthropic_message(
+            "function_call" | "custom_tool_call" => {
+                let kind = item.get("type").and_then(Value::as_str).unwrap_or_default();
+                let leaf_name = item.get("name").and_then(Value::as_str).unwrap_or_default();
+                let original_name = item
+                    .get("namespace")
+                    .and_then(Value::as_str)
+                    .map(|namespace| format!("{namespace}.{leaf_name}"))
+                    .unwrap_or_else(|| leaf_name.to_owned());
+                let upstream_name = tool_map
+                    .iter()
+                    .find_map(|(upstream, spec)| {
+                        (spec.original_name == original_name).then_some(upstream.as_str())
+                    })
+                    .unwrap_or(original_name.as_str());
+                let input = if kind == "custom_tool_call" {
+                    json!({"input":item.get("input").cloned().unwrap_or_default()})
+                } else {
+                    parse_arguments(&item["arguments"])
+                };
+                push_anthropic_message(
+                    &mut messages,
+                    "assistant",
+                    json!({
+                        "type":"tool_use", "id":item.get("call_id").or_else(|| item.get("id")).cloned().unwrap_or_default(),
+                        "name":upstream_name, "input":input
+                    }),
+                );
+            }
+            "function_call_output" | "custom_tool_call_output" => push_anthropic_message(
                 &mut messages,
                 "user",
                 json!({
@@ -466,14 +487,13 @@ fn responses_to_anthropic(body: &Value, model: &str) -> Result<Value> {
             _ => {}
         }
     }
-    let tools = body.get("tools").and_then(Value::as_array).map(|tools| tools.iter()
-        .filter(|tool| tool.get("type").and_then(Value::as_str) == Some("function"))
+    let tools = chat_tool_defs
+        .iter()
         .map(|tool| json!({
-            "name":tool["name"], "description":tool.get("description").cloned().unwrap_or_default(),
-            "input_schema":tool.get("parameters").cloned().unwrap_or_else(|| json!({"type":"object"}))
+            "name":tool["function"]["name"], "description":tool["function"].get("description").cloned().unwrap_or_default(),
+            "input_schema":tool["function"].get("parameters").cloned().unwrap_or_else(|| json!({"type":"object"}))
         }))
-        .collect::<Vec<_>>())
-        .unwrap_or_default();
+        .collect::<Vec<_>>();
     let mut output = json!({"model":model, "messages":messages, "stream":true,
         "max_tokens":body.get("max_output_tokens").and_then(Value::as_u64).unwrap_or(16384)});
     if !system.is_empty() {
@@ -1044,5 +1064,25 @@ mod tests {
             json!({"input":[{"type":"function_call_output","call_id":"c1","output":"ok"}]});
         let out = responses_to_anthropic(&source, "claude").unwrap();
         assert_eq!(out["messages"][0]["content"][0]["type"], "tool_result");
+    }
+    #[test]
+    fn converts_codex_custom_tool_round_trip_to_anthropic() {
+        let source = json!({
+            "tools":[{"type":"namespace","name":"functions","tools":[
+                {"type":"custom","name":"exec","description":"run code"}
+            ]}],
+            "input":[
+                {"type":"message","role":"assistant","content":"I will inspect it."},
+                {"type":"custom_tool_call","call_id":"c1","namespace":"functions","name":"exec","input":"text(1)"},
+                {"type":"custom_tool_call_output","call_id":"c1","output":"1"}
+            ]
+        });
+        let out = responses_to_anthropic(&source, "claude-opus-5").unwrap();
+        assert_eq!(out["tools"][0]["name"], "functions__exec");
+        assert_eq!(out["messages"][0]["role"], "assistant");
+        assert_eq!(out["messages"][0]["content"][1]["type"], "tool_use");
+        assert_eq!(out["messages"][0]["content"][1]["name"], "functions__exec");
+        assert_eq!(out["messages"][1]["role"], "user");
+        assert_eq!(out["messages"][1]["content"][0]["type"], "tool_result");
     }
 }
