@@ -269,6 +269,18 @@ fn responses_to_chat(body: &Value, model: &str) -> Result<Value> {
 }
 
 fn reasoning_item_text(item: &Value) -> String {
+    if let Some(encoded) = item
+        .get("encrypted_content")
+        .and_then(Value::as_str)
+        .and_then(|value| value.strip_prefix("flatline:v1:"))
+    {
+        use base64::Engine as _;
+        if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(encoded) {
+            if let Ok(reasoning) = String::from_utf8(bytes) {
+                return reasoning;
+            }
+        }
+    }
     item.get("content")
         .and_then(Value::as_array)
         .into_iter()
@@ -610,16 +622,21 @@ fn chat_stream(
             yield sse(json!({"type":"response.output_item.done","output_index":0,"item":item})); output.push(item);
         }
         if !state.reasoning.is_empty() {
+            use base64::Engine as _;
             let index = output.len();
+            let encrypted_content = format!(
+                "flatline:v1:{}",
+                base64::engine::general_purpose::STANDARD.encode(state.reasoning.as_bytes())
+            );
             let item = json!({
                 "id":format!("rs_{}",Uuid::new_v4().simple()),
                 "type":"reasoning",
                 "status":"completed",
                 "summary":[],
-                "content":[{"type":"reasoning_text","text":state.reasoning}]
+                "encrypted_content":encrypted_content
             });
             yield sse(json!({"type":"response.output_item.added","output_index":index,"item":{
-                "id":item["id"],"type":"reasoning","status":"in_progress","summary":[],"content":[]
+                "id":item["id"],"type":"reasoning","status":"in_progress","summary":[]
             }}));
             yield sse(json!({"type":"response.output_item.done","output_index":index,"item":item}));
             output.push(item);
@@ -818,10 +835,15 @@ mod tests {
     }
     #[test]
     fn replays_reasoning_content_with_tool_calls() {
+        use base64::Engine as _;
+        let encrypted = format!(
+            "flatline:v1:{}",
+            base64::engine::general_purpose::STANDARD.encode("provider reasoning token")
+        );
         let source = json!({
             "input": [
                 {"type":"reasoning","id":"rs_1","status":"completed","summary":[],
-                 "content":[{"type":"reasoning_text","text":"provider reasoning token"}]},
+                 "encrypted_content":encrypted},
                 {"type":"message","role":"assistant","content":"I will check."},
                 {"type":"function_call","call_id":"call_1","name":"check","arguments":"{}"},
                 {"type":"function_call_output","call_id":"call_1","output":"done"}
