@@ -363,11 +363,27 @@ async fn forward_response(
             }
         };
         if selection.provider.protocol == Protocol::Responses {
-            if let Some(value) = incoming_headers.get("openai-organization") {
-                request = request.header("openai-organization", value);
-            }
-            if let Some(value) = incoming_headers.get("openai-project") {
-                request = request.header("openai-project", value);
+            // A Responses-compatible provider may use these headers to select
+            // its Codex transport behavior. Preserve the direct-client shape
+            // while deliberately excluding credentials, cookies, attestation,
+            // account identifiers, Host, and framing headers.
+            for name in [
+                header::ACCEPT.as_str(),
+                header::USER_AGENT.as_str(),
+                "originator",
+                "session-id",
+                "thread-id",
+                "x-client-request-id",
+                "x-codex-beta-features",
+                "x-codex-turn-metadata",
+                "x-codex-window-id",
+                "x-openai-internal-codex-responses-lite",
+                "openai-organization",
+                "openai-project",
+            ] {
+                if let Some(value) = incoming_headers.get(name) {
+                    request = request.header(name, value);
+                }
             }
         }
         match request.send().await {
