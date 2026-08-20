@@ -178,10 +178,20 @@ fn responses_to_chat(body: &Value, model: &str) -> Result<Value> {
                     item.get("arguments").and_then(Value::as_str).map(str::to_owned)
                         .unwrap_or_else(|| item.get("arguments").cloned().unwrap_or_default().to_string())
                 };
-                messages.push(json!({"role":"assistant", "content":null, "tool_calls":[{
+                let tool_call = json!({
                 "id": item.get("call_id").or_else(|| item.get("id")).and_then(Value::as_str).unwrap_or("call_unknown"),
                 "type":"function", "function": {"name":upstream_name, "arguments":arguments}
-            }]}));
+                });
+                if let Some(tool_calls) = messages
+                    .last_mut()
+                    .filter(|message| message.get("role").and_then(Value::as_str) == Some("assistant"))
+                    .and_then(|message| message.get_mut("tool_calls"))
+                    .and_then(Value::as_array_mut)
+                {
+                    tool_calls.push(tool_call);
+                } else {
+                    messages.push(json!({"role":"assistant", "content":null, "tool_calls":[tool_call]}));
+                }
             }
             "function_call_output" | "custom_tool_call_output" => messages.push(json!({
                 "role":"tool", "tool_call_id":item["call_id"], "content":content_text(&item["output"])
@@ -711,6 +721,29 @@ mod tests {
         let out = responses_to_chat(&source, "deepseek-chat").unwrap();
         assert_eq!(out["messages"][0]["content"], "hi");
         assert_eq!(out["tools"][0]["function"]["name"], "shell");
+    }
+    #[test]
+    fn groups_parallel_tool_calls_before_their_results() {
+        let source = json!({
+            "input": [
+                {"type":"message","role":"assistant","content":"Checking three things."},
+                {"type":"function_call","call_id":"call_1","name":"one","arguments":"{}"},
+                {"type":"function_call","call_id":"call_2","name":"two","arguments":"{}"},
+                {"type":"function_call","call_id":"call_3","name":"three","arguments":"{}"},
+                {"type":"function_call_output","call_id":"call_1","output":"first"},
+                {"type":"function_call_output","call_id":"call_2","output":"second"},
+                {"type":"function_call_output","call_id":"call_3","output":"third"}
+            ]
+        });
+        let out = responses_to_chat(&source, "deepseek-v4-flash").unwrap();
+        let messages = out["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 5);
+        assert_eq!(messages[0]["role"], "assistant");
+        assert_eq!(messages[1]["role"], "assistant");
+        assert_eq!(messages[1]["tool_calls"].as_array().unwrap().len(), 3);
+        assert_eq!(messages[2]["tool_call_id"], "call_1");
+        assert_eq!(messages[3]["tool_call_id"], "call_2");
+        assert_eq!(messages[4]["tool_call_id"], "call_3");
     }
     #[test]
     fn maps_codex_effort_for_glm_53() {
