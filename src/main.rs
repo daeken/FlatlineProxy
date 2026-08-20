@@ -248,6 +248,9 @@ async fn fetch_models(
         model["visibility"] = "list".into();
         model["upgrade"] = Value::Null;
         model["availability_nux"] = Value::Null;
+        for (key, value) in &entry.metadata {
+            model[key] = value.clone();
+        }
         models.push(model);
     }
     let encoded = serde_json::to_vec(&catalog)?;

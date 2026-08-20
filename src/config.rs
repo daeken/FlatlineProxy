@@ -23,6 +23,8 @@ pub struct CatalogModel {
     pub display_name: String,
     #[serde(default)]
     pub description: Option<String>,
+    #[serde(default)]
+    pub metadata: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
