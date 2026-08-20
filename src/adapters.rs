@@ -157,7 +157,9 @@ pub fn response_body(
             }
         })),
         Protocol::ChatCompletions => chat_stream(upstream, requested_model, trace_id, tool_map),
-        Protocol::AnthropicMessages => anthropic_stream(upstream, requested_model),
+        Protocol::AnthropicMessages => {
+            anthropic_stream(upstream, requested_model, trace_id, tool_map)
+        }
     }
 }
 
@@ -793,7 +795,12 @@ fn chat_tool_events(
     (vec![added, delta, arguments_done, item_done], item)
 }
 
-fn anthropic_stream(upstream: reqwest::Response, model: String) -> Body {
+fn anthropic_stream(
+    upstream: reqwest::Response,
+    model: String,
+    trace_id: String,
+    tool_map: ToolMap,
+) -> Body {
     let stream = try_stream! {
         if false { Err::<(), anyhow::Error>(anyhow::anyhow!("unreachable"))?; }
         let response_id = format!("resp_{}", Uuid::new_v4().simple());
@@ -809,7 +816,27 @@ fn anthropic_stream(upstream: reqwest::Response, model: String) -> Body {
                     if value.pointer("/delta/type").and_then(Value::as_str)==Some("text_delta") { let text=value.pointer("/delta/text").and_then(Value::as_str).unwrap_or(""); append_string(block,"text",Some(text)); yield sse(json!({"type":"response.output_text.delta","delta":text})); }
                     if value.pointer("/delta/type").and_then(Value::as_str)==Some("input_json_delta") { append_string(block,"partial_json",value.pointer("/delta/partial_json").and_then(Value::as_str)); }
                 }}
-                Some("content_block_stop") => { let index=value["index"].as_u64().unwrap_or(0).to_string(); if let Some(block)=blocks.remove(&index) { let item = if block["type"]=="tool_use" { json!({"id":format!("fc_{}",Uuid::new_v4().simple()),"type":"function_call","status":"completed","call_id":block["id"],"name":block["name"],"arguments":block.get("partial_json").cloned().unwrap_or_else(|| block["input"].to_string().into())}) } else { json!({"id":format!("msg_{}",Uuid::new_v4().simple()),"type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":block["text"],"annotations":[]}]}) }; let i=output.len(); yield sse(json!({"type":"response.output_item.done","output_index":i,"item":item})); output.push(item); }}
+                Some("content_block_stop") => { let index=value["index"].as_u64().unwrap_or(0).to_string(); if let Some(block)=blocks.remove(&index) {
+                    let i=output.len();
+                    if block["type"]=="tool_use" {
+                        let tool = json!({
+                            "id":block["id"],
+                            "name":block["name"],
+                            "arguments":block.get("partial_json").cloned().unwrap_or_else(|| block["input"].to_string().into())
+                        });
+                        let spec = block["name"].as_str().and_then(|name| tool_map.get(name));
+                        let (events, item) = chat_tool_events(&tool, i, spec);
+                        for event in events {
+                            info!(%trace_id, event_type = event["type"].as_str().unwrap_or("unknown"), output_index = i, "emitting Anthropic Responses tool event");
+                            yield sse(event);
+                        }
+                        output.push(item);
+                    } else {
+                        let item=json!({"id":format!("msg_{}",Uuid::new_v4().simple()),"type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":block["text"],"annotations":[]}]});
+                        yield sse(json!({"type":"response.output_item.done","output_index":i,"item":item}));
+                        output.push(item);
+                    }
+                }}
                 Some("message_delta") => { usage["output_tokens"] = value.pointer("/usage/output_tokens").cloned().unwrap_or(json!(0)); }
                 _ => {}
             }
