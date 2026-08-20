@@ -157,6 +157,17 @@ fn responses_to_chat(body: &Value, model: &str) -> Result<Value> {
         match kind {
             "reasoning" => {
                 pending_reasoning = reasoning_item_text(&item);
+                // Responses streams may place a reasoning item immediately after
+                // the assistant's visible message and before its tool calls. It is
+                // still part of that same Chat Completions assistant message.
+                if !pending_reasoning.is_empty() {
+                    if let Some(message) = messages.last_mut().filter(|message| {
+                        message.get("role").and_then(Value::as_str) == Some("assistant")
+                            && message.get("reasoning_content").is_none()
+                    }) {
+                        message["reasoning_content"] = pending_reasoning.clone().into();
+                    }
+                }
             }
             "message" => {
                 if item.get("content").is_none() && item.get("tools").is_some() {
@@ -858,6 +869,34 @@ mod tests {
         assert_eq!(messages[0]["tool_calls"][0]["id"], "call_1");
         assert_eq!(messages[1]["role"], "tool");
         assert_eq!(messages[1]["tool_call_id"], "call_1");
+    }
+    #[test]
+    fn coalesces_text_then_reasoning_then_tool_call() {
+        use base64::Engine as _;
+        let encrypted = format!(
+            "flatline:v1:{}",
+            base64::engine::general_purpose::STANDARD.encode("required provider reasoning")
+        );
+        let source = json!({
+            "input": [
+                {"type":"message","role":"assistant","content":"I will run it."},
+                {"type":"reasoning","id":"rs_1","status":"completed","summary":[],
+                 "encrypted_content":encrypted},
+                {"type":"custom_tool_call","call_id":"call_1","name":"exec",
+                 "input":"await tools.exec_command({cmd: \"echo hello\"})"},
+                {"type":"custom_tool_call_output","call_id":"call_1","output":"hello\n"}
+            ]
+        });
+        let out = responses_to_chat(&source, "deepseek-v4-flash").unwrap();
+        let messages = out["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["content"], "I will run it.");
+        assert_eq!(
+            messages[0]["reasoning_content"],
+            "required provider reasoning"
+        );
+        assert_eq!(messages[0]["tool_calls"].as_array().unwrap().len(), 1);
+        assert_eq!(messages[1]["role"], "tool");
     }
     #[test]
     fn maps_codex_effort_for_glm_53() {
