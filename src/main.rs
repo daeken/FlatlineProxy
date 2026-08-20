@@ -313,15 +313,13 @@ async fn forward_response(
             cache_resident = selection.cache_resident,
             "attempting route"
         );
-        if state
-            .cooldowns
-            .read()
-            .await
-            .get(&provider_id)
-            .is_some_and(|until| *until > Instant::now())
-        {
-            failures.push(format!("{provider_id}: cooling down"));
-            continue;
+        if let Some(until) = state.cooldowns.read().await.get(&provider_id).copied() {
+            let now = Instant::now();
+            if until > now {
+                let delay = until - now;
+                info!(%trace_id, %provider_id, ?delay, "waiting for provider cooldown");
+                tokio::time::sleep(delay).await;
+            }
         }
         let url = format!(
             "{}{}",
@@ -389,7 +387,7 @@ async fn forward_response(
                 }
             }
         }
-        match request.send().await {
+        match send_with_backoff(request, &provider_id, &trace_id).await {
             Ok(upstream) => {
                 let status = upstream.status();
                 info!(%trace_id, %provider_id, %status, headers = %redacted_headers(upstream.headers()), "upstream response received");
@@ -516,6 +514,62 @@ async fn provider_key(provider: &config::Provider) -> Result<String> {
 
 fn retryable(status: reqwest::StatusCode) -> bool {
     matches!(status.as_u16(), 401 | 402 | 408 | 409 | 429) || status.is_server_error()
+}
+
+fn backoff_retryable(status: reqwest::StatusCode) -> bool {
+    matches!(status.as_u16(), 408 | 409 | 429) || status.is_server_error()
+}
+
+async fn send_with_backoff(
+    template: reqwest::RequestBuilder,
+    provider_id: &str,
+    trace_id: &str,
+) -> Result<reqwest::Response> {
+    const MAX_ATTEMPTS: usize = 4;
+
+    for attempt in 0..MAX_ATTEMPTS {
+        let request = template
+            .try_clone()
+            .context("upstream request body cannot be retried")?;
+        match request.send().await {
+            Ok(response) if backoff_retryable(response.status()) && attempt + 1 < MAX_ATTEMPTS => {
+                let delay = response
+                    .headers()
+                    .get(header::RETRY_AFTER)
+                    .and_then(|value| value.to_str().ok())
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .map(Duration::from_secs)
+                    .unwrap_or_else(|| Duration::from_secs(1_u64 << attempt))
+                    .min(Duration::from_secs(30));
+                warn!(
+                    %trace_id,
+                    %provider_id,
+                    attempt = attempt + 1,
+                    status = %response.status(),
+                    ?delay,
+                    "retrying transient upstream response"
+                );
+                tokio::time::sleep(delay).await;
+            }
+            Ok(response) => return Ok(response),
+            Err(error) if attempt + 1 < MAX_ATTEMPTS => {
+                let delay = Duration::from_secs(1_u64 << attempt);
+                warn!(
+                    %trace_id,
+                    %provider_id,
+                    attempt = attempt + 1,
+                    timeout = error.is_timeout(),
+                    connect = error.is_connect(),
+                    ?delay,
+                    error = ?error,
+                    "retrying upstream transport failure"
+                );
+                tokio::time::sleep(delay).await;
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    unreachable!("retry loop always returns on its final attempt")
 }
 
 fn redacted_headers(headers: &HeaderMap) -> Value {
