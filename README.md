@@ -23,7 +23,7 @@ For ChatGPT-subscription routing, merge `codex.flatline.toml` into `~/.codex/con
 
 For every route whose provider is enabled and whose key environment variable exists, Flatline estimates request cost from approximate input tokens, `max_output_tokens`, and the configured rates. A recently successful request with the same stable prompt prefix is treated as cache-resident for that provider, causing `cached_input_cost_per_million` to apply. Lowest estimated price wins; `priority` breaks price ties. Retryable pre-stream failures fall through to the next route.
 
-OpenAI, OpenRouter, xAI, and Z.AI use their native Responses endpoints. DeepSeek is translated through Chat Completions so its DSML tool calls become structured Responses events; Anthropic is translated through Messages. The starter configuration constrains OpenRouter to `deepseek/*` and `z-ai/*` upstream model names.
+OpenAI, OpenRouter, xAI, DeepSeek, and Z.AI use their native Responses endpoints. Anthropic is translated through Messages. The starter configuration constrains OpenRouter to `deepseek/*` and `z-ai/*` upstream model names.
 
 Cache residency is currently a local routing hint, not a guarantee from the upstream. Usage history and cache hints are in memory and reset on restart. Translated adapters currently target Codex's streaming Responses usage; general non-streaming compatibility will come later.
 
