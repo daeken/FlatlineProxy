@@ -207,6 +207,14 @@ fn responses_to_chat(body: &Value, model: &str) -> Result<Value> {
             .map(glm_53_reasoning_effort)
             .unwrap_or("low");
         output["reasoning_effort"] = effort.into();
+    } else if matches!(model, "deepseek-v4-pro" | "deepseek-v4-flash") {
+        output["thinking"] = json!({"type":"enabled"});
+        let effort = body
+            .pointer("/reasoning/effort")
+            .and_then(Value::as_str)
+            .map(deepseek_v4_reasoning_effort)
+            .unwrap_or("high");
+        output["reasoning_effort"] = effort.into();
     } else if let Some(effort) = body.pointer("/reasoning/effort").and_then(Value::as_str) {
         output["thinking"] = json!({"type":"enabled"});
         output["reasoning_effort"] = effort.into();
@@ -290,6 +298,13 @@ fn glm_53_reasoning_effort(effort: &str) -> &'static str {
         "none" | "minimal" | "low" => "low",
         "max" | "ultra" => "max",
         "medium" | "high" | "xhigh" => "high",
+        _ => "high",
+    }
+}
+
+fn deepseek_v4_reasoning_effort(effort: &str) -> &'static str {
+    match effort {
+        "xhigh" | "max" | "ultra" => "max",
         _ => "high",
     }
 }
@@ -717,6 +732,23 @@ mod tests {
         let out = responses_to_chat(&json!({"input":"hi"}), "glm-5.3").unwrap();
         assert_eq!(out["thinking"]["type"], "enabled");
         assert_eq!(out["reasoning_effort"], "low");
+    }
+    #[test]
+    fn maps_codex_effort_for_deepseek_v4() {
+        for model in ["deepseek-v4-pro", "deepseek-v4-flash"] {
+            for (codex, deepseek) in [
+                ("low", "high"),
+                ("medium", "high"),
+                ("high", "high"),
+                ("xhigh", "max"),
+                ("ultra", "max"),
+            ] {
+                let source = json!({"input":"hi", "reasoning":{"effort":codex}});
+                let out = responses_to_chat(&source, model).unwrap();
+                assert_eq!(out["thinking"]["type"], "enabled");
+                assert_eq!(out["reasoning_effort"], deepseek);
+            }
+        }
     }
     #[test]
     fn emits_complete_responses_tool_call_lifecycle() {

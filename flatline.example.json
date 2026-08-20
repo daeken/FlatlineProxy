@@ -4,12 +4,13 @@
     { "id": "openai", "name": "OpenAI API", "base_url": "https://api.openai.com", "api_key_env": "OPENAI_API_KEY", "path": "/v1/responses", "protocol": "responses", "auth": "bearer", "enabled": true },
     { "id": "anthropic", "name": "Anthropic API", "base_url": "https://api.anthropic.com", "api_key_env": "ANTHROPIC_API_KEY", "path": "/v1/messages", "protocol": "anthropic_messages", "auth": "anthropic_key", "enabled": true },
     { "id": "xai", "name": "xAI API", "base_url": "https://api.x.ai", "api_key_env": "XAI_API_KEY", "path": "/v1/responses", "protocol": "responses", "auth": "bearer", "enabled": true },
-    { "id": "deepseek", "name": "DeepSeek API", "base_url": "https://api.deepseek.com", "api_key_env": "DEEPSEEK_API_KEY", "path": "/chat/completions", "protocol": "chat_completions", "auth": "bearer", "enabled": true },
+    { "id": "deepseek", "name": "DeepSeek API", "base_url": "https://api.deepseek.com", "api_key_env": "DEEPSEEK_API_KEY", "keychain_service": "ai.deepseek.api", "keychain_account": "FlatlineProxy", "path": "/chat/completions", "protocol": "chat_completions", "auth": "bearer", "enabled": true },
     { "id": "zai", "name": "Z.AI API", "base_url": "https://api.z.ai", "api_key_env": "ZAI_API_KEY", "keychain_service": "ai.z.api", "keychain_account": "FlatlineProxy", "path": "/api/paas/v4/chat/completions", "protocol": "chat_completions", "auth": "bearer", "enabled": true },
     { "id": "openrouter", "name": "OpenRouter (DeepSeek and Z.AI only)", "base_url": "https://openrouter.ai", "api_key_env": "OPENROUTER_API_KEY", "path": "/api/v1/responses", "protocol": "responses", "auth": "bearer", "allowed_upstream_model_prefixes": ["deepseek/", "z-ai/"], "enabled": true }
   ],
   "catalog_models": [
-    { "id": "deepseek-v4-pro", "display_name": "DeepSeek V4 Pro · Flatline Preview", "description": "Preview model advertised by Flatline; routing will be connected next." },
+    { "id": "deepseek-v4-pro", "display_name": "DeepSeek V4 Pro · Flatline", "description": "DeepSeek V4 Pro routed directly through Flatline." },
+    { "id": "deepseek-v4-flash", "display_name": "DeepSeek V4 Flash · Flatline", "description": "DeepSeek V4 Flash routed directly through Flatline." },
     { "id": "glm-5.1", "display_name": "Z.AI GLM-5.1 · Flatline Preview", "description": "Preview model advertised by Flatline; routing will be connected next." },
     { "id": "glm-5.2", "display_name": "Z.AI GLM-5.2 · Flatline Preview", "description": "Z.AI model routed through Flatline." },
     { "id": "glm-5.3", "display_name": "Z.AI GLM-5.3 · Flatline Preview", "description": "Z.AI model routed through Flatline." },
@@ -43,9 +44,17 @@
     "xai": { "cache_residency_seconds": 300, "routes": [
       { "provider": "xai", "upstream_model": "grok-4.5", "input_cost_per_million": 0, "output_cost_per_million": 0, "priority": 10 }
     ]},
+    "deepseek-v4-pro": { "cache_residency_seconds": 300, "routes": [
+      { "provider": "deepseek", "upstream_model": "deepseek-v4-pro", "input_cost_per_million": 0.435, "cached_input_cost_per_million": 0.003625, "output_cost_per_million": 0.87, "priority": 10 },
+      { "provider": "openrouter", "upstream_model": "deepseek/deepseek-v4-pro", "input_cost_per_million": 0.435, "output_cost_per_million": 0.87, "priority": 0 }
+    ]},
+    "deepseek-v4-flash": { "cache_residency_seconds": 300, "routes": [
+      { "provider": "deepseek", "upstream_model": "deepseek-v4-flash", "input_cost_per_million": 0.14, "cached_input_cost_per_million": 0.0028, "output_cost_per_million": 0.28, "priority": 10 },
+      { "provider": "openrouter", "upstream_model": "deepseek/deepseek-v4-flash", "input_cost_per_million": 0.09, "output_cost_per_million": 0.18, "priority": 0 }
+    ]},
     "deepseek": { "cache_residency_seconds": 300, "routes": [
-      { "provider": "deepseek", "upstream_model": "deepseek-v4-pro", "input_cost_per_million": 0, "output_cost_per_million": 0, "priority": 10 },
-      { "provider": "openrouter", "upstream_model": "deepseek/deepseek-v4-pro", "input_cost_per_million": 0, "output_cost_per_million": 0, "priority": 0 }
+      { "provider": "deepseek", "upstream_model": "deepseek-v4-pro", "input_cost_per_million": 0.435, "cached_input_cost_per_million": 0.003625, "output_cost_per_million": 0.87, "priority": 10 },
+      { "provider": "openrouter", "upstream_model": "deepseek/deepseek-v4-pro", "input_cost_per_million": 0.435, "output_cost_per_million": 0.87, "priority": 0 }
     ]},
     "glm-5.1": { "cache_residency_seconds": 300, "routes": [
       { "provider": "zai", "upstream_model": "glm-5.1", "input_cost_per_million": 0, "output_cost_per_million": 0, "priority": 10 },
