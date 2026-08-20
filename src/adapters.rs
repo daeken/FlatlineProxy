@@ -145,6 +145,7 @@ pub fn response_body(
 fn responses_to_chat(body: &Value, model: &str) -> Result<Value> {
     let (tools, tool_map) = chat_tools(body);
     let mut messages = Vec::new();
+    let mut pending_reasoning = String::new();
     if let Some(instructions) = body.get("instructions").and_then(Value::as_str) {
         messages.push(json!({"role":"system", "content":instructions}));
     }
@@ -154,6 +155,9 @@ fn responses_to_chat(body: &Value, model: &str) -> Result<Value> {
             .and_then(Value::as_str)
             .unwrap_or("message");
         match kind {
+            "reasoning" => {
+                pending_reasoning = reasoning_item_text(&item);
+            }
             "message" => {
                 if item.get("content").is_none() && item.get("tools").is_some() {
                     continue;
@@ -162,40 +166,72 @@ fn responses_to_chat(body: &Value, model: &str) -> Result<Value> {
                     "developer" | "system" => "system",
                     role => role,
                 };
-                messages.push(json!({
+                let mut message = json!({
                 "role": role,
                 "content": content_text(item.get("content").unwrap_or(&Value::Null))
-            }))},
+                });
+                if role == "assistant" && !pending_reasoning.is_empty() {
+                    message["reasoning_content"] = pending_reasoning.clone().into();
+                }
+                messages.push(message)
+            }
             "function_call" | "custom_tool_call" => {
                 let leaf_name = item.get("name").and_then(Value::as_str).unwrap_or_default();
-                let original_name = item.get("namespace").and_then(Value::as_str)
+                let original_name = item
+                    .get("namespace")
+                    .and_then(Value::as_str)
                     .map(|namespace| format!("{namespace}.{leaf_name}"))
                     .unwrap_or_else(|| leaf_name.to_owned());
-                let upstream_name = tool_map.iter().find_map(|(upstream, spec)| (spec.original_name == original_name).then_some(upstream.as_str())).unwrap_or(original_name.as_str());
+                let upstream_name = tool_map
+                    .iter()
+                    .find_map(|(upstream, spec)| {
+                        (spec.original_name == original_name).then_some(upstream.as_str())
+                    })
+                    .unwrap_or(original_name.as_str());
                 let arguments = if kind == "custom_tool_call" {
                     json!({"input":item.get("input").cloned().unwrap_or_default()}).to_string()
                 } else {
-                    item.get("arguments").and_then(Value::as_str).map(str::to_owned)
-                        .unwrap_or_else(|| item.get("arguments").cloned().unwrap_or_default().to_string())
+                    item.get("arguments")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| {
+                            item.get("arguments")
+                                .cloned()
+                                .unwrap_or_default()
+                                .to_string()
+                        })
                 };
                 let tool_call = json!({
                 "id": item.get("call_id").or_else(|| item.get("id")).and_then(Value::as_str).unwrap_or("call_unknown"),
                 "type":"function", "function": {"name":upstream_name, "arguments":arguments}
                 });
-                if let Some(tool_calls) = messages
-                    .last_mut()
-                    .filter(|message| message.get("role").and_then(Value::as_str) == Some("assistant"))
-                    .and_then(|message| message.get_mut("tool_calls"))
-                    .and_then(Value::as_array_mut)
-                {
-                    tool_calls.push(tool_call);
+                if let Some(message) = messages.last_mut().filter(|message| {
+                    message.get("role").and_then(Value::as_str) == Some("assistant")
+                        && (message.get("tool_calls").is_some()
+                            || message.get("reasoning_content").is_some())
+                }) {
+                    if message.get("tool_calls").is_none() {
+                        message["tool_calls"] = json!([]);
+                    }
+                    message["tool_calls"]
+                        .as_array_mut()
+                        .unwrap()
+                        .push(tool_call);
                 } else {
-                    messages.push(json!({"role":"assistant", "content":null, "tool_calls":[tool_call]}));
+                    let mut message =
+                        json!({"role":"assistant", "content":null, "tool_calls":[tool_call]});
+                    if !pending_reasoning.is_empty() {
+                        message["reasoning_content"] = pending_reasoning.clone().into();
+                    }
+                    messages.push(message);
                 }
             }
-            "function_call_output" | "custom_tool_call_output" => messages.push(json!({
-                "role":"tool", "tool_call_id":item["call_id"], "content":content_text(&item["output"])
-            })),
+            "function_call_output" | "custom_tool_call_output" => {
+                messages.push(json!({
+                    "role":"tool", "tool_call_id":item["call_id"], "content":content_text(&item["output"])
+                }));
+                pending_reasoning.clear();
+            }
             _ => {}
         }
     }
@@ -230,6 +266,22 @@ fn responses_to_chat(body: &Value, model: &str) -> Result<Value> {
         output["reasoning_effort"] = effort.into();
     }
     Ok(output)
+}
+
+fn reasoning_item_text(item: &Value) -> String {
+    item.get("content")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .chain(
+            item.get("summary")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten(),
+        )
+        .filter_map(|part| part.get("text").and_then(Value::as_str))
+        .collect::<Vec<_>>()
+        .join("")
 }
 
 fn chat_tools(body: &Value) -> (Vec<Value>, ToolMap) {
@@ -458,6 +510,7 @@ fn response_shell(id: &str, model: &str, status: &str, output: Value, usage: Val
 struct ChatState {
     text: String,
     text_started: bool,
+    reasoning: String,
     tools: Map<String, Value>,
     usage: Value,
 }
@@ -528,6 +581,9 @@ fn chat_stream(
                     yield sse(json!({"type":"response.output_text.delta","item_id":message_id,"output_index":0,"content_index":0,"delta":text}));
                 }
             }
+            if let Some(reasoning) = delta.get("reasoning_content").and_then(Value::as_str) {
+                state.reasoning.push_str(reasoning);
+            }
             if let Some(tools) = delta.get("tool_calls").and_then(Value::as_array) {
                 for tool in tools {
                     let index = tool.get("index").and_then(Value::as_u64).unwrap_or(0).to_string();
@@ -552,6 +608,21 @@ fn chat_stream(
             yield sse(json!({"type":"response.output_text.done","item_id":message_id,"output_index":0,"content_index":0,"text":state.text}));
             let item = json!({"id":message_id,"type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":state.text,"annotations":[]}]});
             yield sse(json!({"type":"response.output_item.done","output_index":0,"item":item})); output.push(item);
+        }
+        if !state.reasoning.is_empty() {
+            let index = output.len();
+            let item = json!({
+                "id":format!("rs_{}",Uuid::new_v4().simple()),
+                "type":"reasoning",
+                "status":"completed",
+                "summary":[],
+                "content":[{"type":"reasoning_text","text":state.reasoning}]
+            });
+            yield sse(json!({"type":"response.output_item.added","output_index":index,"item":{
+                "id":item["id"],"type":"reasoning","status":"in_progress","summary":[],"content":[]
+            }}));
+            yield sse(json!({"type":"response.output_item.done","output_index":index,"item":item}));
+            output.push(item);
         }
         for (_, tool) in state.tools {
             let index = output.len();
@@ -744,6 +815,27 @@ mod tests {
         assert_eq!(messages[2]["tool_call_id"], "call_1");
         assert_eq!(messages[3]["tool_call_id"], "call_2");
         assert_eq!(messages[4]["tool_call_id"], "call_3");
+    }
+    #[test]
+    fn replays_reasoning_content_with_tool_calls() {
+        let source = json!({
+            "input": [
+                {"type":"reasoning","id":"rs_1","status":"completed","summary":[],
+                 "content":[{"type":"reasoning_text","text":"provider reasoning token"}]},
+                {"type":"message","role":"assistant","content":"I will check."},
+                {"type":"function_call","call_id":"call_1","name":"check","arguments":"{}"},
+                {"type":"function_call_output","call_id":"call_1","output":"done"}
+            ]
+        });
+        let out = responses_to_chat(&source, "deepseek-v4-flash").unwrap();
+        let messages = out["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["role"], "assistant");
+        assert_eq!(messages[0]["content"], "I will check.");
+        assert_eq!(messages[0]["reasoning_content"], "provider reasoning token");
+        assert_eq!(messages[0]["tool_calls"][0]["id"], "call_1");
+        assert_eq!(messages[1]["role"], "tool");
+        assert_eq!(messages[1]["tool_call_id"], "call_1");
     }
     #[test]
     fn maps_codex_effort_for_glm_53() {
