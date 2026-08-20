@@ -66,7 +66,7 @@ pub fn redacted_json(value: &Value) -> Value {
     }
 }
 
-fn redacted_string(value: &str) -> String {
+pub fn redacted_string(value: &str) -> String {
     let lower = value.to_ascii_lowercase();
     if [
         "api key",
@@ -143,11 +143,19 @@ pub fn response_body(
     tool_map: ToolMap,
 ) -> Body {
     match protocol {
-        Protocol::Responses => Body::from_stream(
-            upstream
-                .bytes_stream()
-                .map(|x| x.map_err(std::io::Error::other)),
-        ),
+        Protocol::Responses => Body::from_stream(upstream.bytes_stream().map(move |chunk| {
+            match chunk {
+                Ok(bytes) => {
+                    let payload = redacted_string(&String::from_utf8_lossy(&bytes));
+                    info!(%trace_id, bytes = bytes.len(), payload = %payload, "raw upstream Responses chunk");
+                    Ok(bytes)
+                }
+                Err(error) => {
+                    warn!(%trace_id, %error, "upstream Responses transport error");
+                    Err(std::io::Error::other(error))
+                }
+            }
+        })),
         Protocol::ChatCompletions => chat_stream(upstream, requested_model, trace_id, tool_map),
         Protocol::AnthropicMessages => anthropic_stream(upstream, requested_model),
     }
