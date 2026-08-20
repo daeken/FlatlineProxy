@@ -4,7 +4,7 @@
     { "id": "openai", "name": "OpenAI API", "base_url": "https://api.openai.com", "api_key_env": "OPENAI_API_KEY", "path": "/v1/responses", "protocol": "responses", "auth": "bearer", "enabled": true },
     { "id": "anthropic", "name": "Anthropic API", "base_url": "https://api.anthropic.com", "api_key_env": "ANTHROPIC_API_KEY", "path": "/v1/messages", "protocol": "anthropic_messages", "auth": "anthropic_key", "enabled": true },
     { "id": "xai", "name": "xAI API", "base_url": "https://api.x.ai", "api_key_env": "XAI_API_KEY", "path": "/v1/responses", "protocol": "responses", "auth": "bearer", "enabled": true },
-    { "id": "deepseek", "name": "DeepSeek API", "base_url": "https://api.deepseek.com", "api_key_env": "DEEPSEEK_API_KEY", "keychain_service": "ai.deepseek.api", "keychain_account": "FlatlineProxy", "path": "/responses", "protocol": "responses", "auth": "bearer", "enabled": true },
+    { "id": "deepseek", "name": "DeepSeek API", "base_url": "https://api.deepseek.com", "api_key_env": "DEEPSEEK_API_KEY", "keychain_service": "ai.deepseek.api", "keychain_account": "FlatlineProxy", "path": "/chat/completions", "protocol": "chat_completions", "auth": "bearer", "enabled": true },
     { "id": "zai", "name": "Z.AI API", "base_url": "https://api.z.ai/api/v1", "api_key_env": "ZAI_API_KEY", "keychain_service": "ai.z.api", "keychain_account": "FlatlineProxy", "path": "/responses", "protocol": "responses", "auth": "bearer", "enabled": true },
     { "id": "openrouter", "name": "OpenRouter (DeepSeek and Z.AI only)", "base_url": "https://openrouter.ai", "api_key_env": "OPENROUTER_API_KEY", "path": "/api/v1/responses", "protocol": "responses", "auth": "bearer", "allowed_upstream_model_prefixes": ["deepseek/", "z-ai/"], "enabled": true }
   ],
