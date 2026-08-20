@@ -117,6 +117,17 @@ pub fn request(protocol: Protocol, body: &Value, upstream_model: &str) -> Result
         Protocol::Responses => {
             let mut output = body.clone();
             output["model"] = upstream_model.into();
+            if upstream_model == "glm-5.3" {
+                let effort = body
+                    .pointer("/reasoning/effort")
+                    .and_then(Value::as_str)
+                    .map(glm_53_reasoning_effort)
+                    .unwrap_or("low");
+                if !output.get("reasoning").is_some_and(Value::is_object) {
+                    output["reasoning"] = json!({});
+                }
+                output["reasoning"]["effort"] = effort.into();
+            }
             Ok(output)
         }
         Protocol::ChatCompletions => responses_to_chat(body, upstream_model),
@@ -912,6 +923,12 @@ mod tests {
             assert_eq!(out["thinking"]["type"], "enabled");
             assert_eq!(out["reasoning_effort"], glm);
         }
+    }
+    #[test]
+    fn maps_glm_53_effort_for_native_responses() {
+        let source = json!({"model":"glm-5.3", "input":"hi", "reasoning":{"effort":"xhigh"}});
+        let out = request(Protocol::Responses, &source, "glm-5.3").unwrap();
+        assert_eq!(out["reasoning"]["effort"], "high");
     }
     #[test]
     fn glm_53_always_enables_thinking() {
